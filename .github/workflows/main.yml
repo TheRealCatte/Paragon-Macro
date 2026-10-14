@@ -62,21 +62,21 @@ jobs:
     - name: Build Linux .deb package
       if: matrix.os == 'ubuntu-latest'
       run: |
+        # 1. Compile the Python script into a standalone Linux binary
         pyinstaller --onefile main.py
+        
+        # 2. Make sure the dist folder exists
         mkdir -p dist
+        
+        # 3. Create the .deb package and explicitly save it inside the dist/ folder
         fpm -s dir -t deb \
           -n "python-macro" \
           -v "1.0.0-dev" \
+          -p dist/ \
           --prefix /usr/local/bin \
           dist/main
       shell: bash
 
-    # Pass the compiled files over to the publishing stage
-    - name: Upload Temporary Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact_name }}
-        path: ${{ matrix.path_to_upload }}
 
   # STAGE 2: Download compiled assets and instantly publish them
   publish:
