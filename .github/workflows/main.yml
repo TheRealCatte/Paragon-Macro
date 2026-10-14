@@ -1,17 +1,23 @@
-name: Build Cross-Platform Macro Assets
+name: Continuous Build and Auto-Release
 
 on:
   push:
     branches: [ main ]
   pull_request:
+    types: [ closed ]
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
+  # STAGE 1: Compile the macro binaries concurrently
   build:
-    name: Build for ${{ matrix.os }}
+    # Only run the PR block if it was actually merged into main
+    if: github.event_name == 'push' || github.event.pull_request.merged == true
+    name: Build (${{ matrix.os }})
     strategy:
       matrix:
-        # Run the workflow on both Windows and Ubuntu Linux concurrently
         include:
           - os: windows-latest
             artifact_name: win-macro-exe
@@ -37,16 +43,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-      # Use bash syntax for Linux, default to PowerShell for Windows automatically
       shell: bash
 
-    # --- WINDOWS ONLY BUILD STEP ---
+    # --- WINDOWS BUILD ---
     - name: Build Windows .exe
       if: matrix.os == 'windows-latest'
       run: |
         pyinstaller --onefile --noconsole main.py
 
-    # --- LINUX ONLY BUILD STEP ---
+    # --- LINUX BUILD ---
     - name: Install Debian Packaging Tools
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -57,21 +62,57 @@ jobs:
     - name: Build Linux .deb package
       if: matrix.os == 'ubuntu-latest'
       run: |
-        # 1. Compile the Python script into a standalone Linux binary
         pyinstaller --onefile main.py
-        
-        # 2. Package that binary into a standardized .deb file using FPM
         mkdir -p dist
         fpm -s dir -t deb \
           -n "python-macro" \
-          -v "1.0.0" \
+          -v "1.0.0-dev" \
           --prefix /usr/local/bin \
           dist/main
       shell: bash
 
-    # --- UNIVERSAL UPLOAD STEP ---
-    - name: Upload Generated Binary
+    # Pass the compiled files over to the publishing stage
+    - name: Upload Temporary Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.path_to_upload }}
+
+  # STAGE 2: Download compiled assets and instantly publish them
+  publish:
+    name: Auto-Publish Rolling Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download Windows Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: win-macro-exe
+        path: release-assets/
+
+    - name: Download Linux Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: linux-macro-deb
+        path: release-assets/
+
+    - name: Publish or Update Rolling Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: latest
+        name: "Latest Development Build"
+        body: |
+          This release contains the automated compilation of the most recent code changes.
+          
+          **Last Updated:** ${{ github.event.head_commit.timestamp || 'Just now' }}
+          **Commit:** ${{ github.sha }}
+        draft: false
+        prerelease: true # Marked as prerelease so it acts as an ongoing dev build
+        generate_release_notes: true # Dynamically builds change logs from recent commits
+        files: |
+          release-assets/main.exe
+          release-assets/*.deb
