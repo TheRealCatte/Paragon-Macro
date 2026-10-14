@@ -11,9 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  # STAGE 1: Compile the macro binaries concurrently
   build:
-    # Only run the PR block if it was actually merged into main
     if: github.event_name == 'push' || github.event.pull_request.merged == true
     name: Build (${{ matrix.os }})
     strategy:
@@ -41,15 +39,23 @@ jobs:
     - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller
+        pip install pyinstaller ruff pytest
+        # Explicitly install common macro libraries if they aren't in requirements.txt
+        pip install pyautogui pynput keyboard mouse selenium openpyxl optional-dependencies || true
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       shell: bash
 
     # --- WINDOWS BUILD ---
     - name: Build Windows .exe
       if: matrix.os == 'windows-latest'
+      # Force PowerShell to halt instantly if PyInstaller fails so you get a clear log
+      shell: powershell
       run: |
         pyinstaller --onefile --noconsole main.py
+        if (-not (Test-Path "dist/main.exe")) {
+          Write-Error "PyInstaller failed to generate dist/main.exe!"
+          exit 1
+        }
 
     # --- LINUX BUILD ---
     - name: Install Debian Packaging Tools
@@ -62,13 +68,8 @@ jobs:
     - name: Build Linux .deb package
       if: matrix.os == 'ubuntu-latest'
       run: |
-        # 1. Compile the Python script into a standalone Linux binary
         pyinstaller --onefile main.py
-        
-        # 2. Make sure the dist folder exists
         mkdir -p dist
-        
-        # 3. Create the .deb package and explicitly save it inside the dist/ folder
         fpm -s dir -t deb \
           -n "python-macro" \
           -v "1.0.0-dev" \
@@ -77,8 +78,13 @@ jobs:
           dist/main
       shell: bash
 
+    - name: Upload Temporary Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.path_to_upload }}
+        if-no-files-found: error # Forces the build stage to fail early if files are missing
 
-  # STAGE 2: Download compiled assets and instantly publish them
   publish:
     name: Auto-Publish Rolling Release
     needs: build
@@ -111,8 +117,8 @@ jobs:
           **Last Updated:** ${{ github.event.head_commit.timestamp || 'Just now' }}
           **Commit:** ${{ github.sha }}
         draft: false
-        prerelease: true # Marked as prerelease so it acts as an ongoing dev build
-        generate_release_notes: true # Dynamically builds change logs from recent commits
+        prerelease: true
+        generate_release_notes: true
         files: |
           release-assets/main.exe
           release-assets/*.deb
