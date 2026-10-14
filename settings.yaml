@@ -1,0 +1,21 @@
+hotKeys:
+- key: f1
+  func: startMacro
+- key: f2
+  func: pauseMacro
+- key: f3
+  func: stopMacro
+webView:
+  onTop: false
+  scale: 1
+macro:
+  collect:
+    quests: false
+    availableQuests: {}
+    timedRewards: true
+    spinWheel: true
+  grind:
+    methods:
+    - method: easy
+      count: 1
+    useTimescale: false
